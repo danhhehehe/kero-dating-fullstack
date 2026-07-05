@@ -82,7 +82,18 @@ app.use((req, res, next) => {
 });
 app.use(cookieParser());
 
-const allowedOrigins = CLIENT_URL.split(",").map(s => s.trim());
+function normalizeOrigin(value) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value.replace(/\/+$/, "");
+  }
+}
+
+const allowedOrigins = CLIENT_URL.split(",")
+  .map(s => s.trim())
+  .filter(Boolean)
+  .map(normalizeOrigin);
 app.use(cors({
   credentials: true,
   origin(origin, cb) {
@@ -249,12 +260,28 @@ function hashResetToken(token) {
 }
 
 function resetPasswordUrl(token) {
-  const baseUrl = process.env.RESET_PASSWORD_URL || `${(process.env.CLIENT_URL || "http://localhost:5173").split(",")[0].trim()}/reset-password`;
-  return `${baseUrl.replace(/\/$/, "")}/${token}`;
+  const configuredUrl = process.env.RESET_PASSWORD_URL || (process.env.CLIENT_URL || "http://localhost:5173").split(",")[0].trim();
+  const baseUrl = configuredUrl.replace(/\/+$/, "");
+  const resetBaseUrl = baseUrl.endsWith("/reset-password") ? baseUrl : `${baseUrl}/reset-password`;
+  return `${resetBaseUrl}/${encodeURIComponent(token)}`;
 }
 
 function smtpConfigured() {
   return Boolean(process.env.SMTP_USER?.trim() && process.env.SMTP_APP_PASSWORD?.trim());
+}
+
+function smtpUser() {
+  return process.env.SMTP_USER?.trim();
+}
+
+function smtpPassword() {
+  return process.env.SMTP_APP_PASSWORD?.replace(/\s+/g, "");
+}
+
+function mailFrom() {
+  const configuredFrom = process.env.MAIL_FROM?.trim();
+  if (configuredFrom && !configuredFrom.includes("example.com")) return configuredFrom;
+  return `Kero Security <${smtpUser()}>`;
 }
 
 async function sendPasswordResetEmail({ to, resetUrl }) {
@@ -271,14 +298,17 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
     host: process.env.SMTP_HOST || "smtp.example.com",
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === "true",
+    connectionTimeout: numericEnv("SMTP_CONNECTION_TIMEOUT_MS", 10_000),
+    greetingTimeout: numericEnv("SMTP_GREETING_TIMEOUT_MS", 10_000),
+    socketTimeout: numericEnv("SMTP_SOCKET_TIMEOUT_MS", 15_000),
     auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_APP_PASSWORD
+      user: smtpUser(),
+      pass: smtpPassword()
     }
   });
 
   await transporter.sendMail({
-    from: process.env.MAIL_FROM || `Kero Security <${process.env.SMTP_USER}>`,
+    from: mailFrom(),
     to,
     subject: "Kero Dating - Đặt lại mật khẩu",
     text: `Bạn vừa yêu cầu đặt lại mật khẩu Kero Dating. Link có hiệu lực 15 phút: ${resetUrl}\n\nNếu không phải bạn, hãy bỏ qua email này.`,
@@ -549,8 +579,11 @@ app.post("/api/auth/forgot-password", authLimiter, asyncHandler(async (req, res)
   user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
   await user.save({ validateBeforeSave: false });
 
-  await sendPasswordResetEmail({ to: user.email, resetUrl });
   res.json({ message: genericMessage });
+
+  sendPasswordResetEmail({ to: user.email, resetUrl }).catch(err => {
+    console.error("Password reset email failed:", err.message);
+  });
 }));
 
 app.post("/api/auth/reset-password/:token", authLimiter, asyncHandler(async (req, res) => {

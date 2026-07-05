@@ -23,7 +23,7 @@ export default function IntroSplash() {
 
   useEffect(() => {
     if (!visible) return undefined;
-    const timer = window.setTimeout(finishIntro, 2800);
+    const timer = window.setTimeout(finishIntro, 1100);
     return () => window.clearTimeout(timer);
   }, [visible]);
 
