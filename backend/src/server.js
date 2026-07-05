@@ -45,6 +45,7 @@ function getRequiredEnv(name, { fallbackInDevelopment } = {}) {
 const MONGODB_URI = getRequiredEnv("MONGODB_URI", { fallbackInDevelopment: DEFAULT_DEV_MONGODB_URI });
 const JWT_SECRET = getRequiredEnv("JWT_SECRET");
 const CLIENT_URL = getRequiredEnv("CLIENT_URL");
+const DEFAULT_CLIENT_ORIGIN = "https://danhhehehe.github.io";
 
 if (APP_ENV === "production" && JWT_SECRET.length < 32) {
   console.error("JWT_SECRET must be at least 32 characters in production.");
@@ -55,6 +56,37 @@ function numericEnv(name, fallback) {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
+
+function normalizeOrigin(value) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value.replace(/\/+$/, "");
+  }
+}
+
+function envList(name) {
+  return (process.env[name] || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+const allowedOrigins = new Set([
+  DEFAULT_CLIENT_ORIGIN,
+  ...envList("CLIENT_URL"),
+  ...envList("RESET_PASSWORD_URL"),
+  ...envList("FRONTEND_URL"),
+  ...envList("ALLOWED_ORIGINS")
+].map(normalizeOrigin));
+
+const corsOptions = {
+  credentials: true,
+  origin(origin, cb) {
+    if (!origin || allowedOrigins.has(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS"));
+  }
+};
 
 function sanitizeMongoPayload(value) {
   if (!value || typeof value !== "object") return value;
@@ -73,6 +105,8 @@ function sanitizeMongoPayload(value) {
   return value;
 }
 
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(express.json({ limit: process.env.JSON_LIMIT || "18mb" }));
 app.use(express.urlencoded({ extended: false, limit: process.env.FORM_LIMIT || "1mb" }));
@@ -81,26 +115,6 @@ app.use((req, res, next) => {
   next();
 });
 app.use(cookieParser());
-
-function normalizeOrigin(value) {
-  try {
-    return new URL(value).origin;
-  } catch {
-    return value.replace(/\/+$/, "");
-  }
-}
-
-const allowedOrigins = CLIENT_URL.split(",")
-  .map(s => s.trim())
-  .filter(Boolean)
-  .map(normalizeOrigin);
-app.use(cors({
-  credentials: true,
-  origin(origin, cb) {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error("Not allowed by CORS"));
-  }
-}));
 
 const authLimiter = rateLimit({
   windowMs: numericEnv("AUTH_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
