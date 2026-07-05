@@ -118,7 +118,7 @@ app.use(cookieParser());
 
 const authLimiter = rateLimit({
   windowMs: numericEnv("AUTH_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
-  max: numericEnv("AUTH_RATE_LIMIT_MAX", 10),
+  max: numericEnv("AUTH_RATE_LIMIT_MAX", 100),
   standardHeaders: true,
   legacyHeaders: false,
   message: { code: "TOO_MANY_REQUESTS", message: "Thao tác đăng nhập/đăng ký quá nhiều. Vui lòng thử lại sau." }
@@ -298,6 +298,10 @@ function mailFrom() {
   return `Kero Security <${smtpUser()}>`;
 }
 
+function shouldExposeResetLink() {
+  return APP_ENV === "development" && process.env.DEBUG_RESET_LINK === "true";
+}
+
 async function sendPasswordResetEmail({ to, resetUrl }) {
   if (!smtpConfigured()) {
     if (APP_ENV === "development") {
@@ -332,6 +336,50 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
         <p>Bạn vừa yêu cầu đặt lại mật khẩu Kero Dating.</p>
         <p><a href="${resetUrl}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#ff2f6d;color:#fff;text-decoration:none;font-weight:700">Đặt lại mật khẩu</a></p>
         <p>Link có hiệu lực trong 15 phút. Nếu không phải bạn, hãy bỏ qua email này.</p>
+      </div>
+    `
+  });
+
+  return { sent: true };
+}
+
+async function sendViolationWarningEmail({ to, name, reason, violationCount, banned }) {
+  if (!smtpConfigured()) {
+    console.warn("SMTP is not configured. Violation warning email was not sent.");
+    return { sent: false };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.example.com",
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
+    connectionTimeout: numericEnv("SMTP_CONNECTION_TIMEOUT_MS", 10_000),
+    greetingTimeout: numericEnv("SMTP_GREETING_TIMEOUT_MS", 10_000),
+    socketTimeout: numericEnv("SMTP_SOCKET_TIMEOUT_MS", 15_000),
+    auth: {
+      user: smtpUser(),
+      pass: smtpPassword()
+    }
+  });
+
+  const subject = banned ? "Kero Dating - Tai khoan da bi khoa" : "Kero Dating - Canh cao vi pham";
+  const actionText = banned
+    ? "Tai khoan cua ban da bi khoa vinh vien vi da co 3 lan vi pham duoc xac nhan."
+    : `Day la canh cao vi pham lan ${violationCount}/3. Neu tai pham du 3 lan, tai khoan se bi khoa vinh vien.`;
+
+  await transporter.sendMail({
+    from: mailFrom(),
+    to,
+    subject,
+    text: `Xin chao ${name || "ban"},\n\nKero Security da xac nhan mot bao cao vi pham lien quan den tai khoan cua ban.\nLy do: ${reason}\n${actionText}\n\nHay ton trong nguoi dung khac va tuan thu quy tac an toan cua Kero Dating.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#21172d">
+        <h2>Kero Security</h2>
+        <p>Xin chao ${name || "ban"},</p>
+        <p>Kero Security da xac nhan mot bao cao vi pham lien quan den tai khoan cua ban.</p>
+        <p><strong>Ly do:</strong> ${reason}</p>
+        <p>${actionText}</p>
+        <p>Hay ton trong nguoi dung khac va tuan thu quy tac an toan cua Kero Dating.</p>
       </div>
     `
   });
@@ -446,7 +494,11 @@ const reportSchema = new mongoose.Schema({
   reason: { type: String, enum: REPORT_REASONS, required: true },
   description: { type: String, default: "", maxlength: 500 },
   status: { type: String, enum: ["pending", "reviewing", "resolved", "dismissed"], default: "pending" },
-  adminNote: { type: String, default: "", maxlength: 1000 }
+  adminNote: { type: String, default: "", maxlength: 1000 },
+  violationActionApplied: { type: Boolean, default: false },
+  violationCountAtAction: { type: Number, default: 0 },
+  actionTaken: { type: String, enum: ["none", "warning", "banned"], default: "none" },
+  actionTakenAt: { type: Date, default: null }
 }, { timestamps: true });
 
 const blockSchema = new mongoose.Schema({
@@ -457,7 +509,7 @@ blockSchema.index({ blocker: 1, blockedUser: 1 }, { unique: true });
 
 const interestSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true, trim: true, maxlength: 40 },
-  icon: { type: String, default: "✨" },
+  icon: { type: String, default: "sparkles" },
   isActive: { type: Boolean, default: true }
 }, { timestamps: true });
 
@@ -593,7 +645,10 @@ app.post("/api/auth/forgot-password", authLimiter, asyncHandler(async (req, res)
   user.passwordResetExpires = new Date(Date.now() + 15 * 60 * 1000);
   await user.save({ validateBeforeSave: false });
 
-  res.json({ message: genericMessage });
+  res.json({
+    message: genericMessage,
+    ...(shouldExposeResetLink() ? { resetUrl } : {})
+  });
 
   sendPasswordResetEmail({ to: user.email, resetUrl }).catch(err => {
     console.error("Password reset email failed:", err.message);
@@ -1179,14 +1234,108 @@ app.patch("/api/admin/users/:userId/status", protect, requireAdmin, asyncHandler
   res.json({ user: { id: user._id, name: user.name, email: user.email, role: user.role, status: user.status } });
 }));
 
+app.delete("/api/admin/users/:userId", protect, requireAdmin, asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  if (!mongoose.isValidObjectId(userId)) return res.status(400).json({ message: "User id khong hop le." });
+  if (userId === req.user._id.toString()) return res.status(400).json({ message: "Khong the xoa tai khoan admin dang dang nhap." });
+
+  const user = await User.findById(userId);
+  if (!user) return res.status(404).json({ message: "Khong tim thay nguoi dung." });
+
+  const matches = await Match.find({ users: user._id }).select("_id");
+  const matchIds = matches.map(match => match._id);
+
+  await Promise.all([
+    Message.deleteMany({ match: { $in: matchIds } }),
+    Match.deleteMany({ _id: { $in: matchIds } }),
+    Like.deleteMany({ $or: [{ fromUser: user._id }, { toUser: user._id }] }),
+    Block.deleteMany({ $or: [{ blocker: user._id }, { blockedUser: user._id }] }),
+    Report.deleteMany({ $or: [{ reporter: user._id }, { reportedUser: user._id }] }),
+    DatingProfile.deleteOne({ user: user._id }),
+    User.deleteOne({ _id: user._id })
+  ]);
+
+  res.json({ message: "Da xoa nguoi dung va du lieu lien quan.", deletedUserId: user._id });
+}));
+
 app.get("/api/admin/reports", protect, requireAdmin, asyncHandler(async (req, res) => {
-  const reports = await Report.find().populate("reporter", "name email").populate("reportedUser", "name email status").sort({ createdAt: -1 }).limit(100);
-  res.json({ reports });
+  const reports = await Report.find()
+    .populate("reporter", "name email status")
+    .populate("reportedUser", "name email status")
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+  const reportedIds = [...new Set(reports.map(report => report.reportedUser?._id?.toString()).filter(Boolean))];
+  const confirmedRows = reportedIds.length
+    ? await Report.aggregate([
+      {
+        $match: {
+          reportedUser: { $in: reportedIds.map(id => new mongoose.Types.ObjectId(id)) },
+          status: "resolved"
+        }
+      },
+      { $group: { _id: "$reportedUser", count: { $sum: 1 } } }
+    ])
+    : [];
+  const confirmedMap = new Map(confirmedRows.map(row => [row._id.toString(), row.count]));
+
+  res.json({
+    reports: reports.map(report => ({
+      ...report,
+      confirmedViolationCount: confirmedMap.get(report.reportedUser?._id?.toString()) || 0
+    }))
+  });
 }));
 
 app.patch("/api/admin/reports/:reportId", protect, requireAdmin, asyncHandler(async (req, res) => {
-  const report = await Report.findByIdAndUpdate(req.params.reportId, { status: req.body.status, adminNote: req.body.adminNote }, { new: true });
-  res.json({ report });
+  const status = String(req.body.status || "");
+  if (!["pending", "reviewing", "resolved", "dismissed"].includes(status)) return res.status(400).json({ message: "Trang thai bao cao khong hop le." });
+
+  const report = await Report.findById(req.params.reportId);
+  if (!report) return res.status(404).json({ message: "Khong tim thay bao cao." });
+
+  report.status = status;
+  report.adminNote = String(req.body.adminNote || "").trim().slice(0, 1000);
+
+  let reportedUser = null;
+  if (status === "resolved" && !report.violationActionApplied) {
+    const previousConfirmedCount = await Report.countDocuments({
+      _id: { $ne: report._id },
+      reportedUser: report.reportedUser,
+      status: "resolved"
+    });
+    const violationCount = previousConfirmedCount + 1;
+    const shouldBan = violationCount >= 3;
+
+    reportedUser = await User.findById(report.reportedUser);
+    if (reportedUser && shouldBan) {
+      reportedUser.status = "banned";
+      await reportedUser.save({ validateBeforeSave: false });
+      await Match.updateMany({ users: reportedUser._id, status: "active" }, { status: "unmatched", unmatchedBy: req.user._id });
+    }
+
+    report.violationActionApplied = true;
+    report.violationCountAtAction = violationCount;
+    report.actionTaken = shouldBan ? "banned" : "warning";
+    report.actionTakenAt = new Date();
+
+    if (reportedUser?.email) {
+      sendViolationWarningEmail({
+        to: reportedUser.email,
+        name: reportedUser.name,
+        reason: report.reason,
+        violationCount,
+        banned: shouldBan
+      }).catch(err => console.error("Violation warning email failed:", err.message));
+    }
+  }
+
+  await report.save();
+  const populatedReport = await Report.findById(report._id)
+    .populate("reporter", "name email status")
+    .populate("reportedUser", "name email status");
+  res.json({ report: populatedReport });
 }));
 
 app.get("/api/admin/interests", protect, requireAdmin, asyncHandler(async (req, res) => {
@@ -1195,7 +1344,7 @@ app.get("/api/admin/interests", protect, requireAdmin, asyncHandler(async (req, 
 }));
 
 app.post("/api/admin/interests", protect, requireAdmin, asyncHandler(async (req, res) => {
-  const interest = await Interest.create({ name: req.body.name, icon: req.body.icon || "✨" });
+  const interest = await Interest.create({ name: req.body.name, icon: req.body.icon || "sparkles" });
   res.status(201).json({ interest });
 }));
 

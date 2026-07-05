@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { assetUrl } from "../lib/assetUrl.js";
 
 const INTRO_KEY = "kero_intro_seen";
+const INTRO_DURATION_MS = 3200;
 
 export default function IntroSplash() {
   const [visible, setVisible] = useState(() => {
@@ -23,7 +24,7 @@ export default function IntroSplash() {
 
   useEffect(() => {
     if (!visible) return undefined;
-    const timer = window.setTimeout(finishIntro, 1100);
+    const timer = window.setTimeout(finishIntro, INTRO_DURATION_MS);
     return () => window.clearTimeout(timer);
   }, [visible]);
 

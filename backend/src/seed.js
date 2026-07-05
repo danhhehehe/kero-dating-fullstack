@@ -9,6 +9,7 @@ const APP_ENV = process.env.NODE_ENV || "development";
 const DEFAULT_DEV_MONGODB_URI = "mongodb://127.0.0.1:27017/kero_dating";
 const datingDemoUsersPath = new URL("./generated/datingDemoUsers.json", import.meta.url);
 const ALLOW_PRODUCTION_SEED = process.env.ALLOW_PRODUCTION_SEED === "true";
+const SEED_RESET_DATABASE = process.env.SEED_RESET_DATABASE === "true";
 
 if (APP_ENV === "production" && !ALLOW_PRODUCTION_SEED) {
   console.error("Refusing to run seed in production. Set ALLOW_PRODUCTION_SEED=true only for an intentional reset.");
@@ -100,13 +101,13 @@ function matchKeyFor(a, b) {
 }
 
 async function makeUser(name, email, password, role = "user") {
-  return User.create({
-    name,
-    email: String(email).toLowerCase(),
-    passwordHash: await bcrypt.hash(password, 12),
-    role,
-    status: "active"
-  });
+  const normalizedEmail = String(email).toLowerCase();
+  const passwordHash = await bcrypt.hash(password, 12);
+  return User.findOneAndUpdate(
+    { email: normalizedEmail },
+    { $set: { name, passwordHash, role, status: "active" } },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
 }
 
 function getRequiredSeedEnv(name) {
@@ -153,27 +154,32 @@ async function createDatingDemoUsers() {
     const user = await makeUser(name, email, password);
     createdUsers.push(user);
 
-    await DatingProfile.create({
-      user: user._id,
-      nickname: name,
-      birthday: birthdayForDemo(index),
-      gender: genders[index % genders.length],
-      lookingFor: ["male", "female", "other"],
-      city: cities[index % cities.length],
-      approximateLocation: "private",
-      bio: "Minh thich tro chuyen, ca phe va nhung buoi di dao nhe nhang.",
-      datingGoal: goals[index % goals.length],
-      theme: "kero",
-      interests: [
-        interestPool[index % interestPool.length],
-        interestPool[(index + 2) % interestPool.length],
-        interestPool[(index + 4) % interestPool.length]
-      ],
-      photos: item.photos,
-      isVerified: index % 2 === 0,
-      completed: true,
-      visibility: "public"
-    });
+    await DatingProfile.findOneAndUpdate(
+      { user: user._id },
+      {
+        $set: {
+          nickname: name,
+          birthday: birthdayForDemo(index),
+          gender: genders[index % genders.length],
+          lookingFor: ["male", "female", "other"],
+          city: cities[index % cities.length],
+          approximateLocation: "private",
+          bio: "Minh thich tro chuyen, ca phe va nhung buoi di dao nhe nhang.",
+          datingGoal: goals[index % goals.length],
+          theme: "kero",
+          interests: [
+            interestPool[index % interestPool.length],
+            interestPool[(index + 2) % interestPool.length],
+            interestPool[(index + 4) % interestPool.length]
+          ],
+          photos: item.photos,
+          isVerified: index % 2 === 0,
+          completed: true,
+          visibility: "public"
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
   }
 
   return createdUsers;
@@ -183,23 +189,28 @@ async function createAdmin(adminPhotos) {
   const adminEmail = getRequiredSeedEnv("ADMIN_EMAIL").toLowerCase();
   const adminPassword = getRequiredSeedEnv("ADMIN_PASSWORD");
   const admin = await makeUser("Kero Admin", adminEmail, adminPassword, "admin");
-  await DatingProfile.create({
-    user: admin._id,
-    nickname: "Kero Admin",
-    birthday: "1999-01-01",
-    gender: "other",
-    lookingFor: ["male", "female", "other"],
-    city: "TP.HCM",
-    approximateLocation: "private",
-    bio: "Tai khoan quan tri he thong Kero Dating.",
-    datingGoal: "not_sure",
-    theme: "kero",
-    interests: ["Code", "Thiet ke UI"],
-    photos: adminPhotos.slice(0, 3),
-    isVerified: true,
-    completed: true,
-    visibility: "private"
-  });
+  await DatingProfile.findOneAndUpdate(
+    { user: admin._id },
+    {
+      $set: {
+        nickname: "Kero Admin",
+        birthday: "1999-01-01",
+        gender: "other",
+        lookingFor: ["male", "female", "other"],
+        city: "TP.HCM",
+        approximateLocation: "private",
+        bio: "Tai khoan quan tri he thong Kero Dating.",
+        datingGoal: "not_sure",
+        theme: "kero",
+        interests: ["Code", "Thiet ke UI"],
+        photos: adminPhotos.slice(0, 3),
+        isVerified: true,
+        completed: true,
+        visibility: "private"
+      }
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
   return admin;
 }
 
@@ -207,17 +218,19 @@ async function createQDemoInteractions(users) {
   if (users.length < 3) return;
 
   const [firstUser, secondUser, thirdUser] = users;
-  await Like.insertMany([
-    { fromUser: secondUser._id, toUser: firstUser._id, action: "like" },
-    { fromUser: firstUser._id, toUser: secondUser._id, action: "like" },
-    { fromUser: thirdUser._id, toUser: firstUser._id, action: "like" }
+  await Promise.all([
+    Like.updateOne({ fromUser: secondUser._id, toUser: firstUser._id }, { $set: { action: "like" } }, { upsert: true }),
+    Like.updateOne({ fromUser: firstUser._id, toUser: secondUser._id }, { $set: { action: "like" } }, { upsert: true }),
+    Like.updateOne({ fromUser: thirdUser._id, toUser: firstUser._id }, { $set: { action: "like" } }, { upsert: true })
   ]);
 
-  const firstMatch = await Match.create({
-    users: [firstUser._id, secondUser._id],
-    matchKey: matchKeyFor(firstUser._id, secondUser._id),
-    status: "active"
-  });
+  const firstMatch = await Match.findOneAndUpdate(
+    { matchKey: matchKeyFor(firstUser._id, secondUser._id) },
+    { $set: { users: [firstUser._id, secondUser._id], status: "active" } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  if (await Message.exists({ match: firstMatch._id })) return;
 
   const messages = await Message.insertMany([
     {
@@ -244,16 +257,19 @@ async function createQDemoInteractions(users) {
 
 async function seed() {
   await mongoose.connect(getMongoUri());
-  await Promise.all([
-    User.deleteMany(), DatingProfile.deleteMany(), Interest.deleteMany(),
-    Like.deleteMany(), Match.deleteMany(), Message.deleteMany(), Report.deleteMany(), Block.deleteMany()
-  ]);
+  if (SEED_RESET_DATABASE) {
+    await Promise.all([
+      User.deleteMany(), DatingProfile.deleteMany(), Interest.deleteMany(),
+      Like.deleteMany(), Match.deleteMany(), Message.deleteMany(), Report.deleteMany(), Block.deleteMany()
+    ]);
+    console.log("Database reset completed because SEED_RESET_DATABASE=true.");
+  }
 
-  await Interest.insertMany([
+  await Promise.all([
     ["Ca phe", "coffee"], ["Du lich", "plane"], ["Am nhac", "music"], ["Phim anh", "film"],
     ["Badminton", "racket"], ["Code", "laptop"], ["Thiet ke UI", "palette"], ["An uong", "bowl"],
     ["Gym", "dumbbell"], ["Sach", "book"], ["Nhiep anh", "camera"], ["The thao", "activity"]
-  ].map(([name, icon]) => ({ name, icon, isActive: true })));
+  ].map(([name, icon]) => Interest.updateOne({ name }, { $set: { icon, isActive: true } }, { upsert: true })));
 
   const qUsers = await createDatingDemoUsers();
   const firstQProfile = qUsers.length ? await DatingProfile.findOne({ user: qUsers[0]._id }).select("photos") : null;
@@ -263,10 +279,12 @@ async function seed() {
   await createQDemoInteractions(qUsers);
 
   const allowedEmails = [getRequiredSeedEnv("ADMIN_EMAIL").toLowerCase(), ...qUsers.map(user => user.email)];
-  await User.updateMany(
-    { email: { $nin: allowedEmails }, role: { $ne: "admin" } },
-    { $set: { status: "disabled" } }
-  );
+  if (SEED_RESET_DATABASE) {
+    await User.updateMany(
+      { email: { $nin: allowedEmails }, role: { $ne: "admin" } },
+      { $set: { status: "disabled" } }
+    );
+  }
 
   console.log("Seed completed");
   console.log("Admin account is configured from environment variables.");

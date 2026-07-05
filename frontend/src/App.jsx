@@ -7,17 +7,24 @@ import {
   BarChart3,
   BookOpen,
   Camera,
+  Coffee,
+  Dumbbell,
   Eye,
   Flag,
+  Film,
   Heart,
   HeartHandshake,
   ImagePlus,
+  Laptop,
   LockKeyhole,
   LogIn,
   Menu,
   MessageCircle,
   Mic,
+  Music,
+  Palette,
   PieChart,
+  Plane,
   Plus,
   RotateCcw,
   Send,
@@ -32,6 +39,7 @@ import {
   Trash2,
   UserPlus,
   Users,
+  Utensils,
   UserX,
   X
 } from "lucide-react";
@@ -50,6 +58,36 @@ const chatReportReasons = [
   ["underage", "Người dùng dưới tuổi quy định"],
   ["other", "Lý do khác"]
 ];
+
+const interestIconMap = {
+  activity: Activity,
+  book: BookOpen,
+  bowl: Utensils,
+  camera: Camera,
+  coffee: Coffee,
+  dumbbell: Dumbbell,
+  film: Film,
+  laptop: Laptop,
+  music: Music,
+  palette: Palette,
+  plane: Plane,
+  racket: Activity,
+  sparkles: Sparkles
+};
+
+function normalizeInterestIcon(value) {
+  const icon = String(value || "").trim().toLowerCase();
+  if (!icon || icon === "âœ¨" || icon === "✨") return "sparkles";
+  return icon;
+}
+
+function InterestIcon({ icon, size = 15 }) {
+  const normalized = normalizeInterestIcon(icon);
+  const Icon = interestIconMap[normalized];
+  if (Icon) return <Icon size={size} />;
+  if (normalized.length <= 3) return <span aria-hidden="true">{icon}</span>;
+  return <Sparkles size={size} />;
+}
 
 function formatChatTime(value) {
   if (!value) return "";
@@ -417,19 +455,21 @@ function ForgotPassword() {
   const { t } = useLanguage();
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
+  const [resetUrl, setResetUrl] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function submit(e) {
     e.preventDefault();
     if (loading) return;
-    setMessage(""); setError("");
+    setMessage(""); setResetUrl(""); setError("");
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) return setError("Vui lòng nhập email.");
     setLoading(true);
     try {
       const { data } = await api.post("/auth/forgot-password", { email: cleanEmail });
       setMessage(data.code ? t(`errors.${data.code}`) : data.message || t("forgot.generic"));
+      setResetUrl(data.resetUrl || "");
     } catch (err) { setError(err.code ? t(`errors.${err.code}`) : err.message); }
     finally { setLoading(false); }
   }
@@ -440,6 +480,7 @@ function ForgotPassword() {
     <p>{t("forgot.description")}</p>
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert success">{message}</div>}
+    {resetUrl && <div className="alert success"><a href={resetUrl}>Mở link đặt lại mật khẩu local</a></div>}
     <label>{t("auth.email")}<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
     <button className="primary-btn full" disabled={loading}>{loading ? "Đang gửi..." : t("forgot.send")}</button>
     <p className="form-note"><Link to="/login">{t("auth.backToLogin")}</Link></p>
@@ -702,7 +743,7 @@ function Onboarding() {
         <div className="field-block">
           
           <div className="custom-interest"><input value={customInterest} onChange={e => setCustomInterest(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addCustomInterest(); } }} placeholder="Ví dụ: Porsche, Figma, Gaming..." /><button type="button" onClick={addCustomInterest}><Plus size={16}/> {t("profile.addInterest")}</button></div>
-          <div className="chip-row selectable">{interests.map(i => <button type="button" key={i._id || i.name} className={form.interests.includes(i.name) ? "active" : ""} onClick={() => toggleInterest(i.name)}>{i.icon} {i.name}</button>)}</div>
+          <div className="chip-row selectable">{interests.map(i => <button type="button" key={i._id || i.name} className={form.interests.includes(i.name) ? "active" : ""} onClick={() => toggleInterest(i.name)}><InterestIcon icon={i.icon} /> {i.name}</button>)}</div>
           <div className="chip-row selected">{form.interests.map(i => <button type="button" key={i} onClick={() => toggleInterest(i)}>{i} <X size={13}/></button>)}</div>
         </div>
       </div>
@@ -1489,25 +1530,33 @@ function AdminUsers() {
   async function load() { const { data } = await api.get("/admin/users"); setUsers(data.users); }
   useEffect(() => { load(); }, []);
   async function status(id, s) { await api.patch(`/admin/users/${id}/status`, { status: s }); load(); }
-  return <section className="admin-table-card"><h2>Quản lý người dùng</h2><p>Admin được xem email để hỗ trợ, còn public API không trả email cho người dùng khác.</p><table><thead><tr><th>Tên</th><th>Email</th><th>Role</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{users.map(u => <tr key={u.id}><td>{u.name}</td><td>{u.email}</td><td>{u.role}</td><td><span className={`status ${u.status}`}>{u.status}</span></td><td><button onClick={() => status(u.id, "active")}>Mở</button><button onClick={() => status(u.id, "disabled")}>Vô hiệu hóa</button><button onClick={() => status(u.id, "banned")}>Khóa</button></td></tr>)}</tbody></table></section>;
+  async function removeUser(user) {
+    if (!confirm(`Xóa vĩnh viễn tài khoản ${user.email}? Dữ liệu hồ sơ, match, tin nhắn và báo cáo liên quan cũng sẽ bị xóa.`)) return;
+    await api.delete(`/admin/users/${user.id}`);
+    load();
+  }
+  return <section className="admin-table-card"><h2>Quản lý người dùng</h2><p>Admin được xem email để hỗ trợ, còn public API không trả email cho người dùng khác.</p><table><thead><tr><th>Tên</th><th>Email</th><th>Role</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>{users.map(u => <tr key={u.id}><td>{u.name}</td><td>{u.email}</td><td>{u.role}</td><td><span className={`status ${u.status}`}>{u.status}</span></td><td className="admin-user-actions"><button onClick={() => status(u.id, "active")}>Mở</button><button onClick={() => status(u.id, "disabled")}>Vô hiệu hóa</button><button onClick={() => status(u.id, "banned")}>Khóa</button><button className="danger-table-btn" onClick={() => removeUser(u)}><Trash2 size={14}/> Xóa</button></td></tr>)}</tbody></table></section>;
 }
 
 function AdminReports() {
   const [reports, setReports] = useState([]);
+  const [expandedId, setExpandedId] = useState("");
+  const [notes, setNotes] = useState({});
   async function load() { const { data } = await api.get("/admin/reports"); setReports(data.reports); }
   useEffect(() => { load(); }, []);
-  async function upd(id, s) { await api.patch(`/admin/reports/${id}`, { status: s, adminNote: `Updated ${s}` }); load(); }
-  return <section className="admin-table-card"><h2>Báo cáo vi phạm</h2><table><thead><tr><th>Reporter</th><th>Reported</th><th>Lý do</th><th>Status</th><th>Xử lý</th></tr></thead><tbody>{reports.map(r => <tr key={r._id}><td>{r.reporter?.name}</td><td>{r.reportedUser?.name}</td><td>{r.reason}</td><td><span className={`status ${r.status}`}>{r.status}</span></td><td><button onClick={() => upd(r._id, "reviewing")}>Đang xem</button><button onClick={() => upd(r._id, "resolved")}>Xong</button><button onClick={() => upd(r._id, "dismissed")}>Bỏ qua</button></td></tr>)}</tbody></table></section>;
+  async function upd(id, s) { await api.patch(`/admin/reports/${id}`, { status: s, adminNote: notes[id] || "" }); load(); }
+  function noteFor(report) { return notes[report._id] ?? report.adminNote ?? ""; }
+  return <section className="admin-table-card report-admin-card"><h2>Báo cáo vi phạm</h2><p>Khi admin bấm Xong, hệ thống gửi mail cảnh cáo. Tài khoản đủ 3 vi phạm đã xác nhận sẽ bị khóa vĩnh viễn.</p><table><thead><tr><th>Reporter</th><th>Reported</th><th>Lý do</th><th>Status</th><th>Xử lý</th></tr></thead><tbody>{reports.map(r => <tr key={r._id}><td><strong>{r.reporter?.name}</strong><small>{r.reporter?.email}</small></td><td><strong>{r.reportedUser?.name}</strong><small>{r.reportedUser?.email}</small><small>{r.reportedUser?.status}</small></td><td>{r.reason}<small>{r.source}</small></td><td><span className={`status ${r.status}`}>{r.status}</span>{r.actionTaken !== "none" && <small>{r.actionTaken} · {r.violationCountAtAction || r.confirmedViolationCount}/3</small>}</td><td><button onClick={() => setExpandedId(expandedId === r._id ? "" : r._id)}>{expandedId === r._id ? "Ẩn" : "Chi tiết"}</button><button onClick={() => upd(r._id, "reviewing")}>Đang xem</button><button onClick={() => upd(r._id, "resolved")}>Xong</button><button onClick={() => upd(r._id, "dismissed")}>Bỏ qua</button>{expandedId === r._id && <div className="report-detail-panel"><div><b>Mô tả</b><p>{r.description || "Không có mô tả thêm."}</p></div><div className="report-detail-grid"><span><b>Match</b>{r.match || "Không có"}</span><span><b>Ngày gửi</b>{new Date(r.createdAt).toLocaleString("vi-VN")}</span><span><b>Vi phạm đã xác nhận</b>{r.confirmedViolationCount || 0}/3</span><span><b>Hành động</b>{r.actionTaken || "none"}</span></div><label>Ghi chú admin<textarea value={noteFor(r)} maxLength="1000" onChange={e => setNotes(o => ({ ...o, [r._id]: e.target.value }))} /></label></div>}</td></tr>)}</tbody></table></section>;
 }
 
 function AdminInterests() {
   const [interests, setInterests] = useState([]);
-  const [form, setForm] = useState({ name: "", icon: "✨" });
+  const [form, setForm] = useState({ name: "", icon: "sparkles" });
   async function load() { const { data } = await api.get("/admin/interests"); setInterests(data.interests); }
   useEffect(() => { load(); }, []);
-  async function submit(e) { e.preventDefault(); await api.post("/admin/interests", form); setForm({ name: "", icon: "✨" }); load(); }
+  async function submit(e) { e.preventDefault(); await api.post("/admin/interests", form); setForm({ name: "", icon: "sparkles" }); load(); }
   async function toggle(i) { await api.patch(`/admin/interests/${i._id}`, { isActive: !i.isActive }); load(); }
-  return <section className="admin-table-card"><h2>Quản lý sở thích mặc định</h2><p>User vẫn có thể tự thêm sở thích riêng trong hồ sơ. Admin chỉ quản lý danh sách gợi ý mặc định.</p><form className="inline-form" onSubmit={submit}><input placeholder="Tên sở thích" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /><input value={form.icon} onChange={e => setForm({ ...form, icon: e.target.value })} /><button className="primary-btn">Thêm</button></form><div className="interest-admin-list">{interests.map(i => <button key={i._id} type="button" onClick={() => toggle(i)} className={i.isActive ? "active" : ""}>{i.icon} {i.name}</button>)}</div></section>;
+  return <section className="admin-table-card"><h2>Quản lý sở thích mặc định</h2><p>User vẫn có thể tự thêm sở thích riêng trong hồ sơ. Admin chỉ quản lý danh sách gợi ý mặc định.</p><form className="inline-form" onSubmit={submit}><input placeholder="Tên sở thích" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /><input value={form.icon} onChange={e => setForm({ ...form, icon: e.target.value })} /><button className="primary-btn">Thêm</button></form><div className="interest-admin-list">{interests.map(i => <button key={i._id} type="button" onClick={() => toggle(i)} className={i.isActive ? "active" : ""}><InterestIcon icon={i.icon} /> {i.name}</button>)}</div></section>;
 }
 
 function AppInner() {

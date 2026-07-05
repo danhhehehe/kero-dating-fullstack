@@ -119,3 +119,27 @@ Frontend:
 cd frontend
 npm run build
 ```
+
+Admin:
+admin@kero.local / admin12345
+
+Demo users:
+q01@kero.local / demo12345
+q02@kero.local / demo12345
+q03@kero.local / demo12345
+q04@kero.local / demo12345
+q05@kero.local / demo12345
+q06@kero.local / demo12345
+q07@kero.local / demo12345
+q08@kero.local / demo12345
+q09@kero.local / demo12345
+q10@kero.local / demo12345
+q11@kero.local / demo12345
+q12@kero.local / demo12345
+q13@kero.local / demo12345
+q14@kero.local / demo12345
+q15@kero.local / demo12345
+q16@kero.local / demo12345
+q17@kero.local / demo12345
+q18@kero.local / demo12345
+q19@kero.local / demo12345
