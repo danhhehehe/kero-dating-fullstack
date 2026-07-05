@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { assetUrl } from "../lib/assetUrl.js";
 
 const INTRO_KEY = "kero_intro_seen";
 
@@ -36,7 +37,7 @@ export default function IntroSplash() {
       <div className="intro-logo-stage">
         <div className="intro-ring" />
         <div className="intro-ring intro-ring-soft" />
-        <img className="intro-logo" src="/intro/logo.png" alt="Kero Dating" onError={finishIntro} />
+        <img className="intro-logo" src={assetUrl("intro/logo.png")} alt="Kero Dating" onError={finishIntro} />
         <div className="intro-heart-pulse" />
       </div>
 

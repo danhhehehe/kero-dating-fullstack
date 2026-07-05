@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
-import axios from "axios";
 import { AnimatePresence, motion, useMotionValue, useTransform } from "framer-motion";
 import {
   Activity,
@@ -38,12 +37,8 @@ import {
 } from "lucide-react";
 import { LanguageProvider, useLanguage } from "./i18n.jsx";
 import IntroSplash from "./components/IntroSplash.jsx";
-
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:5000/api",
-  withCredentials: true,
-  headers: { "Content-Type": "application/json" }
-});
+import api from "./lib/api.js";
+import { assetUrl } from "./lib/assetUrl.js";
 
 const chatReportReasons = [
   ["fake_profile", "Tài khoản giả mạo"],
@@ -73,12 +68,6 @@ function formatChatTime(value) {
 function messageTime(message) {
   return formatChatTime(message?.createdAt || message?.updatedAt);
 }
-api.interceptors.response.use(r => r, e => {
-  const error = new Error(e.response?.data?.message || "Có lỗi xảy ra.");
-  error.code = e.response?.data?.code;
-  return Promise.reject(error);
-});
-
 const AuthContext = createContext(null);
 function useAuth() { return useContext(AuthContext); }
 
@@ -186,7 +175,7 @@ function Navbar() {
   return (
     <header className="nav-shell">
       <Link to="/" className="brand" onClick={() => setMenuOpen(false)}>
-        <span className="brand-mark"><img src="/logo/logo.png" alt="Kero Dating logo" className="brand-logo" /></span>
+        <span className="brand-mark"><img src={assetUrl("logo/logo.png")} alt="Kero Dating logo" className="brand-logo" /></span>
         <strong>Kero Dating</strong>
       </Link>
       <button className="nav-menu-btn" type="button" onClick={() => setMenuOpen(open => !open)} aria-label="Mở menu"><Menu size={20} /></button>
@@ -1004,6 +993,7 @@ function Matches() {
 function Chat() {
   const { t } = useLanguage();
   const { matchId } = useParams();
+  const nav = useNavigate();
   const { user } = useAuth();
   const [messages, setMessages] = useState([]);
   const [matches, setMatches] = useState([]);
@@ -1313,7 +1303,7 @@ function Chat() {
   async function unmatch() {
     if (!confirm("Bạn muốn hủy match?")) return;
     await api.patch(`/matches/${matchId}/unmatch`);
-    location.href = "/matches";
+    nav("/matches");
   }
 
   const activeProfile = profile || matches.find(item => item.matchId === matchId)?.profile;
