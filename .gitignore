@@ -22,6 +22,9 @@ logs/
 *.log
 npm-debug.log*
 
+Dating.zip
+Dating/
+
 backend/uploads/private/
 coverage/
 
